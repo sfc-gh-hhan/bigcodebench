@@ -26,6 +26,7 @@ except ImportError:
     warn("GoogleGenAI decoder will not work. Fix by `pip install google-generativeai`")
 
 import torch
+from stop_sequencer import StopSequencer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 try:
@@ -91,8 +92,6 @@ class DecoderBase(ABC):
         max_new_tokens: int = 1280,
         dtype: str = "bfloat16",  # default
         trust_remote_code: bool = False,
-        tokenizer_name: str = None,
-        tokenizer_legacy: bool = False,
     ) -> None:
         print("Initializing a decoder model: {} ...".format(name))
         self.name = name
@@ -103,8 +102,6 @@ class DecoderBase(ABC):
         self.max_new_tokens = max_new_tokens
         self.dtype = dtype
         self.trust_remote_code = trust_remote_code
-        self.tokenizer_name = tokenizer_name
-        self.tokenizer_legacy = tokenizer_legacy
 
     @abstractmethod
     def codegen(
@@ -132,14 +129,11 @@ class VllmDecoder(DecoderBase):
             "dtype": self.dtype,
             "trust_remote_code": self.trust_remote_code,
         }
-        if self.tokenizer_name is None:
-            self.tokenizer_name = self.name
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, **kwargs, legacy=self.tokenizer_legacy)
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.name, **kwargs)
         if self.tokenizer.chat_template is None:
             self.eos += extra_eos_for_direct_completion(dataset)
         self.llm = LLM(model=name, max_model_len=2048, **kwargs)
-        self.llm.set_tokenizer(tokenizer=self.tokenizer)
 
     def is_direct_completion(self) -> bool:
         return self.tokenizer.chat_template is None
@@ -191,12 +185,9 @@ class HfTorchDecoder(DecoderBase):
         kwargs["torch_dtype"] = getattr(torch, self.dtype)
         self.skip_special_tokens = True
 
-        print(f"{kwargs = }", self.tokenizer_name)
-        if self.tokenizer_name is None:
-            self.tokenizer_name = self.name
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, **kwargs, legacy=self.tokenizer_legacy)
-        
+        print(f"{kwargs = }")
+
+        self.tokenizer = AutoTokenizer.from_pretrained(name, **kwargs)
         if self.tokenizer.chat_template is None:
             self.eos += extra_eos_for_direct_completion(dataset)
 
@@ -222,7 +213,18 @@ class HfTorchDecoder(DecoderBase):
             kwargs["top_p"] = 0.95
             kwargs["temperature"] = self.temperature
 
-        outputs = self.model.generate(
+        stop_sequencer = StopSequencer(
+            self.model,
+            model_type="causal",  # or seq2seq
+            tokenizer=self.tokenizer,
+        )
+
+        model = stop_sequencer.register_stop_texts(
+            stop_texts=self.eos,
+            input_length=input_tokens.size(-1),
+        )
+
+        outputs = model.generate(
             input_tokens,
             max_new_tokens=self.max_new_tokens,
             do_sample=do_sample,
@@ -251,8 +253,7 @@ class GenenralHfTorchDecoder(HfTorchDecoder):
         super().__init__(name=name, **kwargs)
         self.eos += ["\n```\n"]
         print(f"EOS strings: {self.eos}")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name if self.tokenizer_name else self.name,
-                                                       **kwargs, legacy=self.tokenizer_legacy)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.name, **kwargs)
 
     def codegen(
         self, prompt: str, do_sample: bool = True, num_samples: int = 200
@@ -404,11 +405,11 @@ class AnthropicMessageDecoder(AnthropicDecoder):
 class GoogleGenAIDecoder(DecoderBase, ABC):
     def __init__(self, name: str, **kwargs) -> None:
         super().__init__(name, **kwargs)
-        genai.configure(api_key=os.environ['GOOGLE_API_KEY'])
+        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
     def is_direct_completion(self) -> bool:
         return False
-    
+
 
 class GeminiDecoder(GoogleGenAIDecoder):
     def codegen(
@@ -453,15 +454,19 @@ class GeminiDecoder(GoogleGenAIDecoder):
                 "threshold": "BLOCK_NONE",
             },
         ]
-        
-        model = genai.GenerativeModel(model_name=self.name, generation_config=genai_config, safety_settings=safety_settings)
-        
+
+        model = genai.GenerativeModel(
+            model_name=self.name,
+            generation_config=genai_config,
+            safety_settings=safety_settings,
+        )
+
         outputs = []
         for _ in range(batch_size):
             response = model.generate_content(
                 "Please generate self-contained code to complete the following problem wrapped in a Python markdown block:"
                 + f"\n```python\n{prompt.strip()}\n```",
-                generation_config=genai_config
+                generation_config=genai_config,
             )
             try:
                 output = response.candidates[0].content.parts[0].text
@@ -485,8 +490,6 @@ def make_model(
     tp=1,
     base_url=None,
     trust_remote_code=False,
-    tokenizer_name=None,
-    tokenizer_legacy=True,
 ):
     if backend == "vllm":
         return GeneralVllmDecoder(
@@ -496,8 +499,6 @@ def make_model(
             dataset=dataset,
             tp=tp,
             trust_remote_code=trust_remote_code,
-            tokenizer_name=tokenizer_name,
-            tokenizer_legacy=tokenizer_legacy,
         )
     elif backend == "hf":
         return GenenralHfTorchDecoder(
@@ -506,8 +507,6 @@ def make_model(
             temperature=temperature,
             dataset=dataset,
             trust_remote_code=trust_remote_code,
-            tokenizer_name=tokenizer_name,
-            tokenizer_legacy=tokenizer_legacy,
         )
     elif backend == "openai":
         return OpenAIChatDecoder(

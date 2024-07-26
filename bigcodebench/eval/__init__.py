@@ -27,21 +27,18 @@ import sys
 import time
 import types
 import unittest
-from multiprocessing import Array, Value, Manager
+from multiprocessing import Array, Manager, Value
 from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 
-from bigcodebench.eval._special_oracle import (
-    _poly,
-)
+from bigcodebench.eval._special_oracle import _poly
 from bigcodebench.eval.utils import (
     create_tempdir,
     reliability_guard,
+    safe_environment,
     swallow_io,
     time_limit,
-    safe_environment,
-    TIMEOUT_LIMIT,
 )
 
 
@@ -111,50 +108,54 @@ def unsafe_execute(
     code: str,
     test_code: str,
     timeout: float,
-    max_as_limit: float,
-    max_data_limit: float,
-    max_stack_limit: float,
     stat,  # Value
     details,  # Array
 ):
     with safe_environment(), create_tempdir():
         # These system calls are needed when cleaning up tempdir.
+        import builtins
         import os
         import shutil
-        import builtins
-        
+
         rmtree = shutil.rmtree
         rmdir = os.rmdir
         chdir = os.chdir
         # Disable functionalities that can make destructive changes to the test.
-        reliability_guard(max_as_limit, max_data_limit, max_stack_limit)
+        # allow only 128GB memory usage
+        # maximum_memory_bytes = 128 * 1024 * 1024 * 1024
+        maximum_memory_bytes = None
+        reliability_guard(maximum_memory_bytes=maximum_memory_bytes)
         module_name = "__test__"
         new_module = types.ModuleType(module_name)
         # Set necessary attributes for the module
-        new_module.__dict__.update({
-            '__builtins__': builtins,
-            '__file__': f"{module_name}.py",
-            '__package__': None,
-            '__doc__': None,
-            'sys': sys,
-            'os': os,
-            'environ': os.environ,
-        })
+        new_module.__dict__.update(
+            {
+                "__builtins__": builtins,
+                "__file__": f"{module_name}.py",
+                "__package__": None,
+                "__doc__": None,
+                "sys": sys,
+                "os": os,
+                "environ": os.environ,
+            }
+        )
 
         try:
             full_code = code + "\n" + test_code
 
             with swallow_io():
-                exec(compile(full_code, f"{module_name}.py", 'exec'), new_module.__dict__)
+                exec(
+                    compile(full_code, f"{module_name}.py", "exec"), new_module.__dict__
+                )
                 sys.modules[module_name] = new_module
-                TestCases = getattr(new_module, 'TestCases')
+                TestCases = getattr(new_module, "TestCases")
                 loader = unittest.TestLoader()
                 suite = loader.loadTestsFromTestCase(TestCases)
                 test_result = unittest.TestResult()
                 start_time = time.time()
                 with time_limit(timeout):
                     suite.run(test_result)
-            
+
             issues = test_result.failures + test_result.errors
             for test, trace in issues:
                 details[test.id().split(".")[-1]] = trace
@@ -172,14 +173,11 @@ def untrusted_check(
     code: str,
     test_code: str,
     entry_point: str,
-    max_as_limit: float,
-    max_data_limit: float,
-    max_stack_limit: float,
     min_time_limit: float = 10,
-    gt_time_limit: float = 60
+    gt_time_limit: float = 60,
 ) -> Tuple[str, np.ndarray]:
     time_limit = max(min_time_limit, gt_time_limit)
-    timeout = max(os.getenv("BIGCODEBENCH_TIMEOUT_PER_TASK", TIMEOUT_LIMIT), time_limit) + 1
+    timeout = max(os.getenv("EVALPLUS_TIMEOUT_PER_TASK", 120), time_limit) + 1
     # shared memory objects
     stat = Value("i", _UNKNOWN)
     manager = Manager()
@@ -192,15 +190,12 @@ def untrusted_check(
             code,
             test_code,
             timeout,
-            max_as_limit,
-            max_data_limit,
-            max_stack_limit,
             stat,
             details,
         ),
     )
     p.start()
-    p.join(timeout=timeout+1)
+    p.join(timeout=timeout + 1)
     if p.is_alive():
         p.terminate()
         time.sleep(0.1)
@@ -211,7 +206,7 @@ def untrusted_check(
     stat = _mapping[stat.value]
     # convert details to a dict
     details = dict(details)
-    
+
     if not stat:
         stat = TIMEOUT
     if stat == PASS:
