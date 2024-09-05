@@ -135,6 +135,10 @@ def main():
     parser.add_argument("--base_url", default=None, type=str)
     parser.add_argument("--tp", default=1, type=int)
     parser.add_argument("--trust_remote_code", action="store_true")
+    parser.add_argument("--max_model_len", default=None, type=int)
+    parser.add_argument("--dtype", default="bfloat16", type=str)
+    parser.add_argument("--quantization", default=None, type=str)
+
     args = parser.parse_args()
 
     assert args.subset in ["complete", "instruct"], f"Invalid subset {args.subset}"
@@ -165,6 +169,9 @@ def main():
         base_url=args.base_url,
         tp=args.tp,
         trust_remote_code=args.trust_remote_code,
+        max_model_len=args.max_model_len,
+        dtype=args.dtype,
+        quantization=args.quantization,
     )
 
     if not args.save_path:

@@ -92,6 +92,8 @@ class DecoderBase(ABC):
         max_new_tokens: int = 1280,
         dtype: str = "bfloat16",  # default
         trust_remote_code: bool = False,
+        max_model_len: int = None,
+        quantization: str = None,
     ) -> None:
         print("Initializing a decoder model: {} ...".format(name))
         self.name = name
@@ -102,6 +104,8 @@ class DecoderBase(ABC):
         self.max_new_tokens = max_new_tokens
         self.dtype = dtype
         self.trust_remote_code = trust_remote_code
+        self.max_model_len = max_model_len
+        self.quantization = quantization
 
     @abstractmethod
     def codegen(
@@ -490,6 +494,9 @@ def make_model(
     tp=1,
     base_url=None,
     trust_remote_code=False,
+    max_model_len=None,
+    dtype=None,
+    quantization=None,
 ):
     if backend == "vllm":
         return GeneralVllmDecoder(
@@ -499,6 +506,9 @@ def make_model(
             dataset=dataset,
             tp=tp,
             trust_remote_code=trust_remote_code,
+            max_model_len=max_model_len,
+            dtype=dtype,
+            quantization=quantization,
         )
     elif backend == "hf":
         return GenenralHfTorchDecoder(
