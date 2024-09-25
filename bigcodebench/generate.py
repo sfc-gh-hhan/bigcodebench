@@ -135,11 +135,18 @@ def main():
     parser.add_argument("--base_url", default=None, type=str)
     parser.add_argument("--tp", default=1, type=int)
     parser.add_argument("--trust_remote_code", action="store_true")
-    parser.add_argument("--max_model_len", default=None, type=int)
+    parser.add_argument("--max_model_len", default=None, type=str)
     parser.add_argument("--dtype", default="bfloat16", type=str)
     parser.add_argument("--quantization", default=None, type=str)
 
     args = parser.parse_args()
+
+    if args.max_model_len.lower() == 'none':
+        args.max_model_len = None
+    else:
+        args.max_model_len = int(args.max_model_len)
+    if args.quantization.lower() == 'none':
+        args.quantization = None
 
     assert args.subset in ["complete", "instruct"], f"Invalid subset {args.subset}"
     assert args.backend in ["vllm", "hf", "openai", "mistral", "anthropic", "google"]
