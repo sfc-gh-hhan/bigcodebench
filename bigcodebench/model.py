@@ -519,11 +519,12 @@ def make_model(
             trust_remote_code=trust_remote_code,
         )
     elif backend == "openai":
+        max_new_tokens = max_model_len-1320
         return OpenAIChatDecoder(
             name=model,
             batch_size=batch_size,
             temperature=temperature,
-            max_model_len=max_model_len,
+            max_new_tokens=max_new_tokens,
             base_url=base_url,
         )
     elif backend == "mistral":
