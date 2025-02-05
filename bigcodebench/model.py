@@ -523,6 +523,7 @@ def make_model(
             name=model,
             batch_size=batch_size,
             temperature=temperature,
+            max_model_len=max_model_len,
             base_url=base_url,
         )
     elif backend == "mistral":
