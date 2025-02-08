@@ -519,7 +519,7 @@ def make_model(
             trust_remote_code=trust_remote_code,
         )
     elif backend == "openai":
-        max_new_tokens = max_model_len-1320
+        max_new_tokens = max_model_len-1400
         return OpenAIChatDecoder(
             name=model,
             batch_size=batch_size,
